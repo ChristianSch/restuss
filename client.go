@@ -12,6 +12,7 @@ import (
 	"math/rand"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jpillora/backoff"
@@ -28,6 +29,8 @@ type Client interface {
 	GetScanByID(id int64) (*ScanDetail, error)
 	GetPluginByID(id int64) (*Plugin, error)
 	GetPluginOutput(scanID, hostID, pluginID int64) (*PluginOutputResponse, error)
+	GetAssetByName(name string) (*Asset, error)
+	GetFindingsByAssetName(name string) ([]Finding, error)
 }
 
 // NessusClient implements nessus.Client
@@ -300,6 +303,148 @@ func (c *NessusClient) GetPolicyByIDContext(ctx context.Context, ID int64) (*Pol
 	p.ID = ID
 
 	return p, nil
+}
+
+// GetAssetByName returns an asset by its name. Returns an error if more than
+// one or none assets are matching.
+func (c *NessusClient) GetAssetByName(ctx context.Context, name string) (*Asset, error) {
+	path := "/api/v3/assets/search"
+
+	payload := map[string]interface{}{
+		"filter": map[string]interface{}{
+			"and": []interface{}{
+				map[string]string{
+					"property": "name",
+					"operator": "eq",
+					"value":    name,
+				},
+			},
+		},
+	}
+
+	jsonBody, err := json.Marshal(payload)
+	if err != nil {
+		return nil, errors.New("Unable to marshall request body" + err.Error())
+	}
+
+	req, err := http.NewRequest(http.MethodPost, c.url+path, bytes.NewBuffer(jsonBody))
+	if err != nil {
+		return nil, errors.New("Unable to create request object: " + err.Error())
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	var result struct {
+		Assets []Asset `json:"assets"`
+	}
+
+	req = req.WithContext(ctx)
+	err = c.performCallAndReadResponse(req, &result)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(result.Assets) == 0 {
+		return nil, fmt.Errorf("No assets matching name: %v", name)
+	}
+	if count := len(result.Assets); count > 1 {
+		return nil, fmt.Errorf("More than one asset matching name: %v (%d)", name, count)
+	}
+
+	return &result.Assets[0], nil
+}
+
+// GetFindingsByAssetName returns all the findings associated to an asset by
+// its name.
+func (c *NessusClient) GetFindingsByAssetName(ctx context.Context, name string) ([]Finding, error) {
+	var findings []Finding
+	path := "/api/v3/findings/vulnerabilities/host/search"
+
+	payload := map[string]interface{}{
+		"filter": map[string]interface{}{
+			"and": []interface{}{
+				map[string]string{
+					"property": "asset.name",
+					"operator": "eq",
+					"value":    name,
+				},
+			},
+		},
+		// NOTE: there are more fields available, we are using just those that
+		// are meaningful to us.
+		"fields": []string{
+			"output",
+			"id",
+			"severity",
+			"port",
+			"protocol",
+			"service",
+			"plugin_id",
+			"name",
+			"description",
+			"synopsis",
+			"cvss3_base_score",
+			"cvss2_base_score",
+			"cwe",
+			"see_also",
+		},
+	}
+
+	jsonBody, err := json.Marshal(payload)
+	if err != nil {
+		return nil, errors.New("Unable to marshall request body" + err.Error())
+	}
+
+	req, err := http.NewRequest(http.MethodPost, c.url+path, bytes.NewBuffer(jsonBody))
+	if err != nil {
+		return nil, errors.New("Unable to create request object: " + err.Error())
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json") // Required.
+
+	var result struct {
+		Findings   []Finding  `json:"findings"`
+		Pagination Pagination `json:"pagination"`
+	}
+
+	req = req.WithContext(ctx)
+
+	err = c.performCallAndReadResponse(req, &result)
+	if err != nil {
+		return nil, err
+	}
+
+	findings = append(findings, result.Findings...)
+
+	// Number of results are paginated. When `Next` is not empty, just send the
+	// value as a parameter for the next request to get the next page.
+	for next := result.Pagination.Next; next != ""; {
+		jsonNext := fmt.Sprintf("{\"next\":\"%s\"}", next)
+		req, err = http.NewRequest(http.MethodPost, c.url+path, strings.NewReader(jsonNext))
+		if err != nil {
+			return nil, errors.New("Unable to create request object: " + err.Error())
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json") // Required.
+
+		var result struct {
+			Findings   []Finding  `json:"findings"`
+			Pagination Pagination `json:"pagination"`
+		}
+
+		req = req.WithContext(ctx)
+		err = c.performCallAndReadResponse(req, &result)
+		if err != nil {
+			return nil, err
+		}
+
+		findings = append(findings, result.Findings...)
+		next = result.Pagination.Next
+	}
+
+	return findings, nil
 }
 
 func (c *NessusClient) performCallAndReadResponse(req *http.Request, data interface{}) error {

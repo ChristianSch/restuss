@@ -1,5 +1,7 @@
 package restuss
 
+import "time"
+
 // PersistedScan represents a Persisted Scan on Nessus API
 type PersistedScan struct {
 	ID                   int64  `json:"id"`
@@ -103,4 +105,74 @@ type Policy struct {
 // PolicySettings represents a setting for policy returned by Nessus API
 type PolicySettings struct {
 	Name string `json:"name"`
+}
+
+// Asset represents the asset entity on Tenable.io.
+//
+// More attributes available at
+// https://developer.tenable.com/docs/common-asset-attributes.
+type Asset struct {
+	ID                 string    `json:"id"`
+	Name               string    `json:"name"`
+	Types              []string  `json:"types"`
+	Sources            []string  `json:"sources"`
+	Created            time.Time `json:"created"`
+	ObservationSources []struct {
+		FirstObserved time.Time `json:"first_observed"`
+		LastObserved  time.Time `json:"last_observed"`
+		Name          string    `json:"name"`
+	} `json:"observation_sources"`
+	IsLicensed bool     `json:"is_licensed"`
+	Fqdns      []string `json:"fqdns"`
+	Tags       []struct {
+		ID       string `json:"id"`
+		Category string `json:"category"`
+		Value    string `json:"value"`
+		Type     string `json:"type"`
+	} `json:"tags"`
+	Network struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	} `json:"network"`
+	FirstObserved time.Time `json:"first_observed"`
+	DisplayFqdn   string    `json:"display_fqdn"`
+	IsDeleted     bool      `json:"is_deleted"`
+	LastObserved  time.Time `json:"last_observed"`
+	Updated       time.Time `json:"updated"`
+}
+
+// Finding represents the finding entity on Tenable.io.
+//
+// More info available at
+// https://developer.tenable.com/docs/tenable-plugin-attributes.
+type Finding struct {
+	Output     string `json:"output"`
+	ID         string `json:"id"`
+	Severity   int    `json:"severity"`
+	Port       int    `json:"port"`
+	Protocol   string `json:"protocol"`
+	Service    string `json:"service"`
+	Definition struct {
+		ID          int    `json:"id"` // plugin_id
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		Synopsis    string `json:"synopsis"`
+		Solution    string `json"solution"`
+		CVSS3       struct {
+			BaseScore *float32 `json:"base_score"`
+		} `json:"cvss3"`
+		CVSS2 struct {
+			BaseScore *float32 `json:"base_score"`
+		} `json:"cvss2"`
+		CWE     []string `json:"cwe"`
+		SeeAlso []string `json:"see_also"`
+	} `json:"definition"`
+}
+
+// Pagination is used to iterate results for some endpoints. If the attribute
+// `Next` has content, needs to be passed as a parameter to the next request.
+type Pagination struct {
+	Next  string `json:"next"`
+	Limit int    `json:"limit"`
+	Total int    `json:"total"`
 }
